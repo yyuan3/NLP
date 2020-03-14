@@ -1,0 +1,305 @@
+---
+title: "R Final report"
+author: "Ye"
+date: "2/23/2020"
+output: html_document
+---
+
+Kickstarter is an American public-benefit corporation. The company's stated mission is to "help bring creative projects to life". This dataset includes 240787 creative projects, such as films,music, stage shows, comics, journalism, video games, technology and
+
+In this project, I focus more on three columns, the project title, their state (successful funded or failed) and their category to see whether their project name will influence their funded result.
+
+
+# Data Summary 
+
+## Load library
+```{r, message=FALSE,warning=FALSE}
+library(tidyverse)
+library(tidytext)
+library(stringr)
+library(tm)
+library(textstem)
+library(wordcloud2)
+library(sentimentr)
+library(lsa)
+library(topicmodels)
+library(dplyr)
+library(ggplot2)
+library(textdata)
+library(lexicon)
+library(magrittr)
+library(ggpubr)
+library(gridExtra)
+library(tm)
+library(stm)
+```
+Summary of the column I want to focus.
+
+## Summary
+```{r}
+kickstarterraw <- read.csv('ks-projects-201801.csv')
+kickstarter <- kickstarterraw%>%
+  mutate(title = as.character(name))%>%
+  mutate(category = as.factor(category))%>%
+  select(title, state,category)
+  
+summary(kickstarter)
+```
+
+Clean the blank, stopwords first and build a world cloud to see the high frequency words in title. Most projects are about album, game, film, book and music.
+
+## Word Cloud
+```{r}
+kickstarterall <- kickstarter %>% 
+        select(title,state) %>%
+        mutate(title = as.character(title), 
+         title = str_replace_all(title, "\n", " "),   
+         title = str_replace_all(title, "\\[[A-Za-z]+\\s*[0-9]*]", ""),
+         title = str_replace_all(title, "([0-9])", ""),
+         title = str_squish(title), 
+         title = str_replace_all(title, "NA", ""),
+         title = gsub("([a-z])([A-Z])", "\\1 \\2", title)) %>%
+        drop_na() %>%
+  unnest_tokens(word, title) %>% 
+  anti_join(stop_words) %>%
+  count(word, sort = TRUE) %>%
+  top_n(20)
+
+kickstarterall%>% wordcloud2(color = "black")
+```
+
+Canceled, Album, book,,film, game appears most in the kickstarter project list.
+
+## High frequency words difference
+
+Then, I want to see whether there is any difference of the high frequency words between the successful project and failed project
+
+```{r}
+kickstartersucessful <- kickstarter %>% 
+        select(title,state) %>%
+        filter(state == 'successful')%>%
+        mutate(title = as.character(title), 
+         title = str_replace_all(title, "\n", " "),   
+         title = str_replace_all(title, "\\[[A-Za-z]+\\s*[0-9]*]", ""),
+         title = str_replace_all(title, "([0-9])", ""),
+         title = str_squish(title), 
+         title = str_replace_all(title, "NA", ""),
+         title = gsub("([a-z])([A-Z])", "\\1 \\2", title)) %>%
+        drop_na() %>%
+  unnest_tokens(word, title) %>% 
+  anti_join(stop_words) %>%
+  count(word, sort = TRUE) %>%
+  top_n(10)
+
+p1 <- kickstartersucessful %>% ggplot() + geom_col(mapping = aes(x=reorder(word, n), y = n)) + coord_flip()+ggtitle('Successful funded project')
+```
+
+
+```{r}
+kickstarterfailed <- kickstarter%>%
+  filter(state == 'failed')%>%
+  mutate(title = as.character(title), 
+         title = str_replace_all(title, "\n", " "),   
+         title = str_replace_all(title, "\\[[A-Za-z]+\\s*[0-9]*]", ""),
+         title = str_replace_all(title, "([0-9])", ""),
+         title = str_squish(title), 
+         title = str_replace_all(title, "NA", ""),
+         title = gsub("([a-z])([A-Z])", "\\1 \\2", title)) %>%
+        drop_na() %>%
+  unnest_tokens(word, title) %>% 
+  anti_join(stop_words) %>%
+  count(word, sort = TRUE) %>%
+  top_n(10)
+
+p2 <- kickstarterfailed %>% ggplot() + geom_col(mapping = aes(x=reorder(word, n), y = n)) + coord_flip()+ggtitle('Failed funded project')
+```
+
+```{r}
+theme_set(theme_pubr())
+ggarrange(p1,p2,ncol=2,nrow=1,heights =c(3,3) )
+```
+
+From the plot comparsion,  there is no difference in the top 3 most frequency word, but short, debut, ep topic are more likely to lead to successful project.
+Life, series, world are more likely to failed funded project
+
+
+# Sentimental Analysis
+The purpose of sentimental analysis is to see whether the sentimental score have relationship with project's final state. Does the higher sentimental score lead to successful project?
+## Load dictionary (nrc)
+```{r}
+nrcWord <- textdata::lexicon_nrc()
+nrcValues <- lexicon::hash_sentiment_nrc
+nrcDominance <- textdata::lexicon_nrc_vad()
+unique(nrcWord$sentiment)
+```
+
+To decide whehther to fund the project, I choose anticipation and trust as obsevered feeling.
+```{r}
+nrcWord_Funding <- nrcWord%>%
+  filter(sentiment == 'anticipation'|sentiment == 'trust')
+head(nrcWord_Funding)
+```
+
+```{r}
+Funding_score <- nrcValues[nrcValues$x %in% nrcWord_Funding$word,]
+head(Funding_score)
+```
+
+
+```{r}
+df_title <- kickstarter%>%
+  select(title,state)%>%
+  mutate(state = as.factor(state))
+head(df_title)
+```
+
+# Mean sentimenal score by state
+```{r}
+Funding_score_Sentiment <- sentiment(get_sentences(df_title), 
+          polarity_dt = Funding_score) %>% 
+  group_by(state) %>% 
+  summarize(nrc_meanFundingscore = mean(sentiment))%>%
+  arrange(state)
+Funding_score_Sentiment
+```
+
+
+```{r}
+ggplot(data=Funding_score_Sentiment, aes(x=state, y=nrc_meanFundingscore)) + geom_point(size = 4)+ggtitle('Mean sentimental score by each project state')
+
+```
+Higher sentimental score leads to  more failed and successful funded project. Low score directly lead to canceled and suspended.
+
+```{r}
+df_title_successful <- kickstarter%>%
+  filter(state =='successful')%>%
+  select(title,category)
+```
+## Preferable topic
+
+During all successful project, I group the mean sentimental score by topic to see which kind of topic is more popular.
+```{r}
+Funding_category_Sentiment <- sentiment(get_sentences(df_title_successful), 
+          polarity_dt = Funding_score) %>% 
+  group_by(category) %>% 
+  summarize(nrc_meanFundingscore = mean(sentiment))%>%
+  arrange(desc(nrc_meanFundingscore))
+head(Funding_category_Sentiment)
+```
+```{r}
+Funding_category_Sentiment_plot <- Funding_category_Sentiment%>%
+  filter(category=='Dance'|category=='Art'|category=='Theater'|category=='Food'|category=='Publishing'|category=='Journalism')
+ggplot(data=Funding_category_Sentiment_plot, aes(x=reorder(category,-nrc_meanFundingscore), y=nrc_meanFundingscore)) + geom_bar(stat="identity")+ggtitle('Mean sentimental score by each project state')
+
+```
+
+From the plot, we can see people prefer more on dance, art these entertaining topic, which may lead to high possibility of getting funds.
+
+
+
+# Topic Analysis
+
+## Data cleanning
+```{r}
+topic_analysis <- kickstarter%>%
+  select(title,state)%>%
+  mutate(text = as.character(title), 
+         text = str_replace_all(text, "\n", " "),   
+         text = str_replace_all(text, "(\\[.*?\\])", ""),
+         text = str_squish(text), 
+         text = gsub("([a-z])([A-Z])", "\\1 \\2", text), 
+         text = tolower(text), 
+         text = removeWords(text, c("’", stopwords(kind = "en"))), 
+         text = removePunctuation(text), 
+         text = removeNumbers(text),
+         text = lemmatize_strings(text), 
+         doc_id = c(1:240787)) %>% 
+  select(doc_id, text, state)
+
+head(topic_analysis)
+```
+## Building corpus
+
+```{r}
+kickstarterCorpus = Corpus(DataframeSource(topic_analysis))
+kickstarterCorpus[[1]][[2]]
+```
+
+
+```{r}
+meta(kickstarterCorpus[1])
+
+set.seed(1001)
+
+holdoutRows = sample(1:nrow(topic_analysis), 100, replace = FALSE)
+
+lyricText = textProcessor(documents = topic_analysis$text[-c(holdoutRows)], 
+                          metadata = topic_analysis[-c(holdoutRows), ], 
+                          stem = FALSE)
+
+lyricPrep = prepDocuments(documents = lyricText$documents, 
+                               vocab = lyricText$vocab,
+                               meta = lyricText$meta)
+```
+
+```{r}
+kTest = searchK(documents = lyricPrep$documents, 
+             vocab = lyricPrep$vocab, 
+             K = c(5, 10), verbose = FALSE)
+
+plot(kTest)
+```
+
+From the residual and semantic coherence plot, we can know 7 topic is the best number to represent the whole data.
+
+```{r}
+topics7 = stm(documents = lyricPrep$documents, 
+             vocab = lyricPrep$vocab, seed = 1001,
+             K = 7, verbose = FALSE)
+plot(topics7)
+
+
+```
+
+Topic 4 accounts for the highest expected topic proportions.
+
+```{r}
+labelTopics(topics7)
+```
+
+When we see frex in topic 4.roleplaying, drive, dead, level, knight, wrestle, occupy only appears in this topic.
+Most of them are related to the book, game app.
+
+```{r}
+findThoughts(topics7, texts = lyricPrep$meta$text, n = 1)
+```
+
+In the sentences of topic 4, we can see tactic, strategy,card game best symbolized the topic 4, which is related to the game.
+
+## Conclusion
+
+1.Summary: Music, book, album appears most during all the project.
+
+2.Sentimental analysis: People are willing to fund those project with entertainment topic.
+
+3.Topic analysis: Book, game, app these words accounts for the highest proportion of expected topic.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

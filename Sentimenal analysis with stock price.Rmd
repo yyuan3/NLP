@@ -1,0 +1,416 @@
+---
+title: "Sentimental Analysis"
+author: "Ye Yuan"
+date: "12/17/2019"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: darkly
+---
+
+# The Data
+
+The data is on Sakai in the `data` folder. You will be working with the data in the file called *wweCalls*. You should use functions within R (e.g., `unzip` or `unz`) to unzip it.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(quantmod)
+library(dplyr)
+library(ggplot2)
+library(textdata)
+library(sentimentr)
+library(lexicon)
+library(magrittr)
+library(tidyverse)
+library(ggpubr)
+library(gridExtra)
+```
+```{r}
+zipF<- "C:/Users/jufey/Desktop/ND learning/12. Unstructure data/wweCalls.zip"
+outDir<-"C:/Users/jufey/Desktop/ND learning/12. Unstructure data/unzipfolder"
+unzip(zipF,exdir=outDir)
+```
+
+# Bronze
+
+## Step 1
+
+Read all of the parsed transcripts into R. You can do them individually, but that is a horrible idea and I don't recommend it. Instead, use the `list.files()` function and read files from the resultant object.
+
+Perform some initial exploration of the text and perform any initial cleaning. This is entirely up to you to do whatever you consider necessary.
+```{r}
+file_list <-list.files("C:/Users/jufey/Desktop/ND learning/12. Unstructure data/unzipfolder",pattern = 'parsed')
+file_list
+```
+
+Load all the file and combine to one dataset
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+allfiles <- lapply(file_list, function(x) {
+  read.csv(x)
+})
+allfilesread <- dplyr::bind_rows(allfiles)
+
+```
+
+## Step 2
+
+Perform sentiment analyses on the texts. Given that these are earnings calls, you will likely want to use Loughran and McDonald's lexicon. This lexicon can be found in the `lexicon` package and in the `textdata` package. You should also explore the various `nrc` lexicons. Exploring the versions offered in `textdata` is a good start. Select any of the emotions from the various `nrc` lexicons (found within `textdata`) and perform sentiment analyses using that particular emotion. A good approach would be to use the words found within `textdata` and find them within `lexicon`.
+
+Below is an example of how you might get data from `textdata`. 
+
+How you choose to aggregate sentiment is entirely up to you, but some reasonable ideas would be to aggregate them by indiviual, by role within the call, or the call as a whole. What can be learned about the sentiment from call to call?
+```{r}
+allfilesread1 <- allfilesread%>%
+  select(name,organization,title,text,gender,date,quarter)
+  
+allfilesread1 <- na.omit(allfilesread1)
+  
+```
+
+
+
+```{r}
+#textdata::get_sentiments("nrc")
+nrcWord <- textdata::lexicon_nrc()
+head(nrcWord)
+nrcValues <- lexicon::hash_sentiment_nrc
+#nrcValues
+nrcDominance <- textdata::lexicon_nrc_vad()
+#nrcDominance
+# You will likely want to make good use of %in% or filter.
+```
+
+From dictionary, I choose fear and anger as my observation for sentimental analysis.I want to find relationship between the title and text.
+```{r}
+nrcWord_anger_fear <- nrcWord%>%
+  filter(sentiment=="	anger"|sentiment=="fear")
+head(nrcWord_anger_fear)
+```
+
+```{r}
+pn_score <- nrcValues[nrcValues$x %in% nrcWord_anger_fear$word,]
+head(pn_score)
+```
+
+```{r}
+nrcDominance<- nrcDominance%>%
+  select(Word,Dominance)
+head(nrcDominance)
+pn_Dominance <- nrcValues[nrcValues$x %in% nrcDominance$Word,]
+head(pn_Dominance)
+```
+
+First, clean the data of title.
+```{r}
+df_title <- allfilesread1%>%
+  select(title,text)
+unique(df_title$title)
+```
+I group all the tile to 6 main categories.
+```{r}
+df_title<- df_title%>%
+  mutate(title = ifelse( (grepl("VP|Vice President",title) | grepl("IR|Investor Relations",title) ), "VP/IR", title ))%>%
+  mutate(title = ifelse( grepl("CEO|Chief Executive Officer",title), "CEO", title ))%>%
+  mutate(title = ifelse( (grepl("Planning",title) & grepl("Analysis",title) ), "Analyst", title ))%>%
+  mutate(title = ifelse( grepl("Analyst",title), "Analyst", title ))%>%
+  mutate(title = ifelse( (grepl("Chief",title) & grepl("Fin|Fia",title) ), "CFO", title ))%>%
+  mutate(title = ifelse( grepl("CFO",title), "CFO", title ))
+unique(df_title$title)
+```
+
+I choose Dominance as my score method and count the mean score Dominance group by each title.
+```{r}
+pn_score_Sentiment <- sentiment(get_sentences(df_title), 
+          polarity_dt = pn_score) %>% 
+  group_by(title) %>% 
+  summarize(nrc_meanpnscore = mean(sentiment))%>%
+  arrange(desc(nrc_meanpnscore))
+pn_score_Sentiment
+
+pn_Dominance_Sentiment <- sentiment(get_sentences(df_title), 
+          polarity_dt = pn_Dominance) %>% 
+  group_by(title) %>% 
+  summarize(nrc_meanpnDominance = mean(sentiment))%>%
+  arrange(desc(nrc_meanpnDominance))
+pn_Dominance_Sentiment
+```
+
+
+
+Forloughran_mcdonald dictionary (financial dictionary), I also choose fear and anger as my observation.
+```{r}
+LMValues <- lexicon::hash_sentiment_loughran_mcdonald
+
+pn_score_m <- LMValues[LMValues$x %in% nrcWord_anger_fear$word,]
+head(pn_score_m)
+pn_Dominance_m <- LMValues[LMValues$x %in% nrcDominance$Word,]
+head(pn_Dominance_m)
+```
+```{r}
+pn_score_Sentiment_m <- sentiment(get_sentences(df_title), 
+          polarity_dt = pn_score_m) %>% 
+  group_by(title) %>% 
+  summarize(meanpnscore_m = mean(sentiment))%>%
+  arrange(desc(meanpnscore_m))
+pn_score_Sentiment_m
+
+pn_Dominance_Sentiment_m <- sentiment(get_sentences(df_title), 
+          polarity_dt = pn_Dominance_m) %>% 
+  group_by(title) %>% 
+  summarize(meanpnDominance_m = mean(sentiment))%>%
+  arrange(desc(meanpnDominance_m))
+pn_Dominance_Sentiment_m
+```
+
+I combine the score and Dominance together group by each title.First graph is nrc dictionary. Second is loughran_mcdonald dictionary.
+```{r}
+pn_score_Sentiment <- as.data.frame(pn_score_Sentiment)
+Final_sentimenatal_fear_anger_nrc <- pn_score_Sentiment%>%
+  merge( . , pn_Dominance_Sentiment)
+
+
+pn_score_Sentiment_m <- as.data.frame(pn_score_Sentiment_m)
+Final_sentimenatal_fear_anger_m <- pn_score_Sentiment_m%>%
+  merge(.,pn_Dominance_Sentiment_m)
+
+Final_sentimenatal_fear_anger_nrc
+Final_sentimenatal_fear_anger_m
+```
+
+```{r}
+Final_sentimenatal_fear_anger_nrc_gather <- Final_sentimenatal_fear_anger_nrc%>%
+  gather("scoretype","meanscore",-title)%>%
+  arrange(desc(meanscore))%>%
+  mutate(title = as.factor(title))
+Final_sentimenatal_fear_anger_nrc_gather
+
+
+Final_sentimenatal_fear_anger_m_gather <- Final_sentimenatal_fear_anger_m%>%
+  gather("scoretype","meanscore",-title)%>%
+  arrange(desc(meanscore))%>%
+  mutate(title = as.factor(title))
+
+```
+
+```{r}
+p1 <- ggplot(data=Final_sentimenatal_fear_anger_nrc_gather, aes(x=title, y=meanscore, color=scoretype)) + geom_point(size = 3)+
+  ggtitle('Mean sentimental score by Dominance and score nrc')
+
+
+p2 <- ggplot(data=Final_sentimenatal_fear_anger_m_gather, aes(x=title, y=meanscore, color=scoretype)) + geom_point(size = 3)+
+  ggtitle('Mean sentimental score by Dominance and score LM')
+
+
+theme_set(theme_pubr())
+ggarrange(p1,p2,ncol=1,nrow=2,heights =c(3,3) )
+```
+
+From the plot, we know 2 dictionary almost get the same results. CEO and COO have higher fear and anger feeling than other title worker and also both of them the core of the company.
+LM dictionary's mean score is higher than nrc. In comparision, analyst and VP/IR has lower meanscore in mean sentimental. Chairman has the lowest, maybe chairman do not directly manage the company. To sum up, the score of sentimental analysis has relationship with the title. People who has more responsibility has higher fear and anger sentimental scores.
+
+
+
+# Silver
+
+## Step 3
+
+Register for a free API key from <a href"https://www.alphavantage.co/documentation/">alphavantage</a>. Using your API key, get the daily time series for the given ticker and explore the 10 trading days around each call's date (i.e., the closing price for 5 days before the call, the closing price for the day of the call, and the closing price for the 5 days after the call). Do any visible patterns emerge when exploring the closing prices and the sentiment scores you created? Explain what this might mean for people wanting to make decisions based upon a call.
+
+
+For this section, I want to detect the relationship between sentimental analysis and stock price. Will the text in discussion influence the stock price?
+
+```{r}
+library(httr)
+test <- GET("https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=WWE&apikey=LFZAVK2SZ6DQGB0V&outputsize=full")
+parseTest <- content(test, as = "parsed")
+parseTest[1]
+```
+
+Through webscrapping, I got the all the close price of wwe stock. 
+```{r}
+closeValues = parseTest$`Time Series (Daily)`
+out<- lapply(1:length(closeValues),function(x){
+  date = names(closeValues[x])
+  close = closeValues[[x]]$`4. close`
+  data.frame(date = date,
+             close = close)
+  })
+
+alldateclose <- do.call("rbind",out)
+head(alldateclose)
+alldateclose_clean <- alldateclose%>%
+  mutate(date=as.Date(date))%>%
+  mutate(close = as.character(close))%>%
+  mutate(close = as.numeric(close))
+```
+
+
+Then, I need to combine the price range from T-5 to T+5 around the close date. First, do some cleanning.
+```{r}
+df5 <- alldateclose_clean%>%
+  mutate(date=date+5)%>%
+  mutate(Tplus5=close)%>%
+  select(-close)
+df4 <- alldateclose_clean%>%
+  mutate(date=date+4)%>%
+  mutate(Tplus4=close)%>%
+  select(-close)
+df3 <- alldateclose_clean%>%
+  mutate(date=date+3)%>%
+  mutate(Tplus3=close)%>%
+  select(-close)
+df2 <- alldateclose_clean%>%
+  mutate(date=date+2)%>%
+  mutate(Tplus2=close)%>%
+  select(-close)
+df1 <- alldateclose_clean%>%
+  mutate(date=date+1)%>%
+  mutate(Tplus1=close)%>%
+  select(-close)
+dfm1 <- alldateclose_clean%>%
+  mutate(date=date-1)%>%
+  mutate(Tmin1=close)%>%
+  select(-close)
+dfm2 <- alldateclose_clean%>%
+  mutate(date=date-1)%>%
+  mutate(Tmin2=close)%>%
+  select(-close)
+dfm3 <- alldateclose_clean%>%
+  mutate(date=date-1)%>%
+  mutate(Tmin3=close)%>%
+  select(-close)
+dfm4 <- alldateclose_clean%>%
+  mutate(date=date-1)%>%
+  mutate(Tmin4=close)%>%
+  select(-close)
+dfm5 <- alldateclose_clean%>%
+  mutate(date=date-1)%>%
+  mutate(Tmin5=close)%>%
+  select(-close)
+alldateclose_clean <- alldateclose_clean%>%
+  mutate(T = close)%>%
+  select(-close)
+```
+
+```{r}
+stock_range_10 <- Reduce(function(x, y) merge(x, y, all=TRUE), list(df5,df4,df3,df2,df1,alldateclose_clean,dfm1,dfm2,dfm3,dfm4,dfm5))
+
+```
+
+
+Clean the date to the regular form.
+```{r}
+dateword <- allfilesread1%>%
+  select(text,date)
+
+
+dateword <- dateword%>%
+  separate(date,c('day', 'month','year'),'-')
+
+dateword <- dateword%>%
+  mutate(month = ifelse((month=='Dec'),'12',month))%>%
+  mutate(month = ifelse((month=='Nov'),'11',month))%>%
+  mutate(month = ifelse((month=='Feb'),'2',month))%>%
+  mutate(month = ifelse((month=='Jun'),'1',month))%>%
+  mutate(month = ifelse((month=='Aug'),'8',month))%>%
+  mutate(month = ifelse((month=='Mar'),'3',month))%>%
+  mutate(month = ifelse((month=='May'),'5',month))%>%
+  mutate(month = ifelse((month=='Sep'),'5',month))%>%
+  mutate(year = paste0('20',year))%>%
+  mutate(date=paste(year,month,day,sep = '-'))%>%
+  mutate(date = as.Date(date))%>%
+  select(text,date)
+
+```
+
+Then, combine the stock data with our owndataset. At the same time, I use LM dictionary as my tool for sentimental analysis and count its mena dominance by each day.
+```{r}
+nrcWord <- textdata::lexicon_nrc()
+nrcValues <- lexicon::hash_sentiment_nrc
+nrcDominance <- textdata::lexicon_nrc_vad()
+nrcWord_anger_fear <- nrcWord%>%
+  filter(sentiment=="	anger"|sentiment=="fear")
+
+stock_Dominance_m <- LMValues[LMValues$x %in% nrcDominance$Word,]
+
+stock_Dominance_Sentiment_m <- sentiment(get_sentences(dateword), 
+          polarity_dt = stock_Dominance_m) %>% 
+  group_by(date) %>% 
+  summarize(meanpnDominance_m = mean(sentiment))%>%
+  arrange(desc(date))
+
+```
+
+Then, we got the table including the date, mean dominance, close prices range from T-5 to T+5. Then we need to find the relationship between the Dominance and the close price. Will the sentimental score influence the change of stock price?
+```{r}
+stock_Dominance_Sentiment_m <- stock_Dominance_Sentiment_m%>%
+  left_join(stock_range_10)
+stock_Dominance_Sentiment_m
+```
+
+I first gather the table and arrange it by mean Dominance descending. Then I draw 3 plots stock price line trend, stock price range plot for each date and the sentimental score by bar chart.
+
+```{r}
+stock_Dominance_Sentiment_m_gather <- stock_Dominance_Sentiment_m%>%
+  gather("T_plus_minus","stockprice",-meanpnDominance_m,-date)%>%
+  mutate(T_plus_minus = as.factor(T_plus_minus))%>%
+  arrange(desc(meanpnDominance_m))
+stock_Dominance_Sentiment_m_gather
+stockline <- ggplot(data=stock_Dominance_Sentiment_m_gather) + 
+  geom_line(aes(x=date, y=stockprice,color = T_plus_minus))+
+  ggtitle('Stock price line trend')
+
+stockplot <- ggplot(data=stock_Dominance_Sentiment_m_gather) + 
+  geom_point(aes(x=date, y=stockprice,color = T_plus_minus))+
+  ylim(8,18)+
+  ggtitle('Stock price range plot for dates')
+
+stockbar<- ggplot(data=stock_Dominance_Sentiment_m_gather,aes(x=date, y=meanpnDominance_m)) + 
+  geom_bar(stat="identity")+
+  ggtitle('Mean sentimental Dominance score for fear and anger by each date')
+stockline
+stockplot
+stockbar
+```
+
+Combine the stock plot and the dominance score together.
+```{r}
+theme_set(theme_pubr())
+ggarrange(stockline,stockbar,ncol=1,nrow=2,heights =c(3,1.5) )
+```
+
+```{r}
+theme_set(theme_pubr())
+ggarrange(stockplot,stockbar,ncol=1,nrow=2,heights =c(3,1.5) )
+```
+
+From the plot above, we can see the trend and the variance of the meanDominance and the stockprice are very different.
+
+Then, I take some certain day with highest and lowest sentimental scores to see the relationhship between price and the scores.
+
+The highest sentimental Dominance score is in 2005-05-07. We see after relase on May 05 2020, the stock price increase 2 days. 	
+```{r}
+getSymbols("WWE",src="yahoo",from="2005-05-02", to='2005-05-12') 
+chartSeries(WWE,TA=NULL)
+```
+
+The second highest is in 2006-01-13. After release, a significant increase after that day.	
+```{r}
+getSymbols("WWE",src="yahoo",from="2006-01-08", to='2006-1-18') 
+chartSeries(WWE,TA=NULL)
+```
+
+The lowest sentimental meanscore is 2010-08-05. After release, it decrease.
+```{r}
+getSymbols("WWE",src="yahoo",from="2010-07-30	", to='2010-08-10') 
+chartSeries(WWE,TA=NULL)
+```
+
+
+The second lowest 2009-08-06. It decrease than increase.
+```{r}
+getSymbols("WWE",src="yahoo",from="2009-08-01	", to='2009-08-11') 
+chartSeries(WWE,TA=NULL)
+```
+From the whole analysis, we know that higher sentimental dominance score will increase the stock price. Lower score may influence their stock price.

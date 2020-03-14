@@ -1,0 +1,182 @@
+---
+title: "hw2"
+author: "Ye"
+date: "2/20/2020"
+output: html_document
+---
+
+
+
+
+# sentimental analysis 
+I want to use nrc dictionary to do sentimental analysis for pros and want to find the relationship between the dominance and the ratings. Does higher sentimental score will lead to higher rating?
+
+## Load Library
+```{r message=FALSE}
+library(quantmod)
+library(dplyr)
+library(ggplot2)
+library(textdata)
+library(sentimentr)
+library(lexicon)
+library(magrittr)
+library(tidyverse)
+library(ggpubr)
+library(gridExtra)
+library(stringr)
+library(tm)
+library(textstem)
+library(stm)
+```
+
+## Load Data
+```{r}
+load('glassDoor.Rdata')
+```
+
+## Load dictionary
+```{r}
+
+nrcWord <- textdata::lexicon_nrc()
+head(nrcWord)
+nrcValues <- lexicon::hash_sentiment_nrc
+#nrcValues
+nrcDominance <- textdata::lexicon_nrc_vad()
+#nrcDominance
+```
+
+
+For the nrc words, I choose trust as my observation.
+```{r}
+nrcWord_trust <- nrcWord%>%
+  filter(sentiment=="trust")
+head(nrcWord_trust)
+```
+
+```{r}
+trust_score <- nrcValues[nrcValues$x %in% nrcWord_trust$word,]
+head(trust_score)
+```
+
+Then, I put pro and rating column into my observation
+```{r}
+df_title <- glassDoor%>%
+  select(pros,rating)%>%
+  mutate(rating = as.numeric(rating))
+head(df_title)
+```
+
+## sentimental score by each score
+```{r}
+trust_score_Sentiment <- sentiment(get_sentences(df_title), 
+          polarity_dt = trust_score) %>% 
+  group_by(rating) %>% 
+  summarize(nrc_meantrustscore = mean(sentiment))%>%
+  arrange(rating)
+trust_score_Sentiment
+```
+
+## Relationship plot
+```{r}
+p1 <- ggplot(data=trust_score_Sentiment, aes(x=rating, y=nrc_meantrustscore)) + geom_point(size = 3)+geom_line()
+  #ggtitle('Mean sentimental score by Dominance and score nrc')
+p1
+```
+
+From the plot, we can know the result is exactly the opposite of our guess. Higher meanscore leads to lower rating. The gap between rating 5 and rating 1 is almost 0.1.
+
+# Topic Analysis
+
+
+## Data cleanning
+```{r}
+
+topic_analysis <- glassDoor%>%
+  select(pros,rating)%>%
+  mutate(text = as.character(pros), 
+         text = str_replace_all(text, "\n", " "),   
+         text = str_replace_all(text, "(\\[.*?\\])", ""),
+         text = str_squish(text), 
+         text = gsub("([a-z])([A-Z])", "\\1 \\2", text), 
+         text = tolower(text), 
+         text = removeWords(text, c("’", stopwords(kind = "en"))), 
+         text = removePunctuation(text), 
+         text = removeNumbers(text),
+         text = lemmatize_strings(text), 
+          doc_id = c(1:1831)) %>% 
+  select(doc_id, text, rating)%>%
+  as.data.frame()
+head(topic_analysis)
+```
+
+
+```{r}
+glassdoorCorpus = Corpus(DataframeSource(topic_analysis))
+glassdoorCorpus[[1]][[2]]
+```
+
+## building corpus
+```{r}
+meta(glassdoorCorpus[1])
+
+set.seed(1001)
+
+holdoutRows = sample(1:nrow(topic_analysis), 100, replace = FALSE)
+
+lyricText = textProcessor(documents = topic_analysis$text[-c(holdoutRows)], 
+                          metadata = topic_analysis[-c(holdoutRows), ], 
+                          stem = FALSE)
+
+lyricPrep = prepDocuments(documents = lyricText$documents, 
+                               vocab = lyricText$vocab,
+                               meta = lyricText$meta)
+```
+The stm package has some pretty nice facilities for determining a number of topics:
+
+```{r}
+kTest = searchK(documents = lyricPrep$documents, 
+             vocab = lyricPrep$vocab, 
+             K = c(3, 4, 5, 10, 20), verbose = FALSE)
+
+plot(kTest)
+```
+From the residual and semantic coherence plot, we can know 10 topic is the best number to represent the whole data.
+
+So, we choose k =10 to select 10 top topics.
+```{r}
+topics10 = stm(documents = lyricPrep$documents, 
+             vocab = lyricPrep$vocab, seed = 1001,
+             K = 10, verbose = FALSE)
+plot(topics10)
+
+
+```
+Topic 7: work,good,great accounts for the highest proportion.That maybe because I choose pros as my observation. Lets see some typical words or sentences in the document.
+
+```{r}
+labelTopics(topics10)
+```
+
+When we see frex in topic 7.The achievement, coworker, efficient, hope, independent, onsite, oportunities only appears in this topic.
+Maybe because people love this job because they can get achievement and coworker is good.
+
+```{r}
+findThoughts(topics10, texts = lyricPrep$meta$text, n = 1)
+```
+
+In the sentences of topic 7, we can see good location, good salary and free lunch best symbolized the topic 7, that meets the criteria for describing good work.
+
+
+## Conclusion
+1. For sentimental analysis: higher nrc_meanscore leads to lower rating of company.
+
+2. For topic analysis: salary, location, free lunch is the one of the important feature which employees cares most for the good rating.
+
+
+
+
+
+
+
+
+
